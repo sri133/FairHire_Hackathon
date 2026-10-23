@@ -1,0 +1,66 @@
+{
+  "shap_model_accuracy": 0.662,
+  "dnn_ablation": {
+    "MiniLM only": {
+      "val_f1": 0.499,
+      "test_acc": 0.534,
+      "test_f1": 0.512
+    },
+    "MiniLM + CNN sections": {
+      "val_f1": 0.493,
+      "test_acc": 0.547,
+      "test_f1": 0.518
+    },
+    "MiniLM + CNN + BiLSTM": {
+      "val_f1": 0.492,
+      "test_acc": 0.475,
+      "test_f1": 0.435
+    }
+  },
+  "dnn_chosen": "MiniLM only",
+  "tfidf_logreg_acc": 0.654,
+  "minilm_logreg_acc": 0.601,
+  "fairness": {
+    "gender_raw": {
+      "rate_A": 0.247,
+      "rate_B": 0.354,
+      "DI": 0.697,
+      "DP_gap": 0.107,
+      "flip": 0.107
+    },
+    "gender_anonymized": {
+      "rate_A": 0.3,
+      "rate_B": 0.3,
+      "DI": 1.0,
+      "DP_gap": 0.0,
+      "flip": 0.0
+    },
+    "age_raw": {
+      "rate_A": 0.298,
+      "rate_B": 0.303,
+      "DI": 0.982,
+      "DP_gap": 0.005,
+      "flip": 0.005
+    },
+    "age_anonymized": {
+      "rate_A": 0.3,
+      "rate_B": 0.3,
+      "DI": 1.0,
+      "DP_gap": 0.0,
+      "flip": 0.0
+    }
+  },
+  "adversary_accuracy": {
+    "gender_raw": 0.643,
+    "gender_anonymized": 0.504,
+    "age_raw": 0.542,
+    "age_anonymized": 0.5
+  },
+  "anonymizer_recall": {
+    "name_seen": 0.885,
+    "name_new": 0.845,
+    "pronoun": 1.0,
+    "year": 1.0
+  },
+  "twin_text_identical": 0.772
+}
