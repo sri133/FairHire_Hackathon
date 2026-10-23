@@ -1,6 +1,6 @@
 """FairForge core logic.
 
-What happens to one resume:
+What happens to one resume uploaded to the model:
   1. HIDE IDENTITY      spaCy + rules remove names, places, colleges, pronouns, contact details and graduation years.
   2. SORT SECTIONS      a CNN labels every line: Summary / Skills / Experience / Education / Other.
   3. READ THE CAREER    a BiLSTM (a type of RNN) reads the job-history lines in order and scores the career path.
