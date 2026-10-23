@@ -1,6 +1,6 @@
 """FairForge core logic.
 
-What happens to one resume uploaded to the model:
+What happens to one resume:
   1. HIDE IDENTITY      spaCy + rules remove names, places, colleges, pronouns, contact details and graduation years.
   2. SORT SECTIONS      a CNN labels every line: Summary / Skills / Experience / Education / Other.
   3. READ THE CAREER    a BiLSTM (a type of RNN) reads the job-history lines in order and scores the career path.
@@ -131,7 +131,7 @@ class FitDNN(nn.Module):
 # ------------------------------------------------------------------------------------------- identity hiding
 # Patterns for details that have a fixed shape. RULES below pairs each pattern with the tag that replaces it.
 EMAIL = re.compile(r"[\w.+-]+@[\w-]+\.[\w.]+")
-URL = re.compile(r"(?:https?://|www\.)\S+", re.I)
+URL = re.compile(r"(?:https?://|www\.|(?:linkedin|github|gitlab)\.com/)\S+", re.I)   # also catches links without https://, e.g. github.com/john-doe
 PHONE = re.compile(r"\+?\d[\d\s().-]{8,}\d")
 YEAR = re.compile(r"\b(?:19|20)\d{2}\b")
 PRONOUN = re.compile(r"\b(?:he|she|him|her|his|hers|himself|herself)\b", re.I)
@@ -182,7 +182,7 @@ class Anonymizer:
     # Main method of the anonymizer. For every line it asks spaCy for names and places, replaces them, then applies the
     # regex rules.
     def hide_lines(self, lines):
-        """Return (hidden lines, counter of what was hidden). Names in the first 3 lines are hidden even if the first name is unknown."""
+        """Return (hidden lines, counter of what was hidden). Names in the first 6 lines are hidden even if the first name is unknown."""
         hidden_lines, hidden_counts = [], collections.Counter()
         spacy_docs = list(self.nlp.pipe(lines, batch_size=64)) if self.nlp is not None else [None] * len(lines)
         for line_index, (line, spacy_doc) in enumerate(zip(lines, spacy_docs)):
@@ -198,7 +198,7 @@ class Anonymizer:
                         # from being hidden by mistake.
                         is_known_first_name = (entity_words[0].lower() in FIRST_NAMES
                                                and not any(word.lower() in NOT_A_NAME for word in entity_words[1:]))
-                        is_name_at_top = (line_index < 3 and entity.start_char < 60 and NAME_SHAPE.fullmatch(entity.text.strip()) is not None
+                        is_name_at_top = (line_index < 6 and entity.start_char < 60 and NAME_SHAPE.fullmatch(entity.text.strip()) is not None
                                           and not any(word.lower() in NOT_A_NAME for word in entity_words))
                         placeholder = "[NAME]" if (is_known_first_name or is_name_at_top) else None
                     # GPE means country, city or state. Tool names that spaCy often mistakes for places are skipped.
@@ -341,7 +341,7 @@ class FairForge:
     @torch.no_grad()
     def label_lines(self, lines):
         """CNN: one section label per line."""
-        word_ids = torch.tensor(encode_to_word_ids(lines, self.vocab, self.line_length))
+        word_ids = torch.tensor(encode_to_word_ids(lines, self.vocab, self.line_length), dtype=torch.long, device="cpu")
         predictions = [self.section_cnn(word_ids[start:start + 512]).argmax(1).numpy() for start in range(0, len(word_ids), 512)]
         return [SECTION_LABELS[index] for index in np.concatenate(predictions)]
 
@@ -358,13 +358,18 @@ class FairForge:
     def career_probabilities(self, lines, sections):
         """BiLSTM: how likely each job family is, judging only by the job history. Also returns how many history lines were read."""
         career_matrix, lines_read = self.build_career_input(lines, sections)
-        return softmax(self.career_lstm(torch.tensor(career_matrix))[0].numpy()), lines_read
+        if lines_read == 0:
+            # No job-history lines (e.g. a fresh graduate): an all-zero input would give arbitrary, uncalibrated
+            # logits, so return a uniform prior (no opinion) instead.
+            return np.full(len(self.categories), 1.0 / len(self.categories)), 0
+        career_tensor = torch.tensor(career_matrix, dtype=torch.long, device="cpu")
+        return softmax(self.career_lstm(career_tensor)[0].numpy()), lines_read
 
     @torch.no_grad()
     def career_vector(self, lines, sections):
         """BiLSTM: the career vector of a resume (only needed when the DNN was trained with it)."""
         career_matrix, _ = self.build_career_input(lines, sections)
-        return self.career_lstm.encode(torch.tensor(career_matrix))[0].numpy()
+        return self.career_lstm.encode(torch.tensor(career_matrix, dtype=torch.long, device="cpu"))[0].numpy()
 
     def embed(self, texts):
         """MiniLM meaning vectors (None when MiniLM is not available)."""
@@ -423,7 +428,7 @@ class FairForge:
             if self.dnn_config["use_career"]:
                 feature_blocks.append(self.career_vector(prepared["anon"], prepared["sections"]))
             with torch.no_grad():
-                dnn_input = torch.tensor(np.concatenate(feature_blocks).astype(np.float32)[None])
+                dnn_input = torch.tensor(np.concatenate(feature_blocks).astype(np.float32)[None], dtype=torch.float32, device="cpu")
                 job_fit_probabilities = softmax(self.fit_dnn(dnn_input)[0].numpy())
             engine_name = "MiniLM + DNN"
         else:                                                                    # offline fallback: TF-IDF instead of MiniLM
@@ -455,6 +460,30 @@ class FairForge:
                 "emb": resume_vector_for_chart, "emb_jd": job_embedding, **prepared}
 
     # ------------------------------------------------------------------ step 3: explain with SHAP
+    def _standardize_shap(self, shap_output, n_words):
+        """Return SHAP values as a float array of shape [samples, words, job families], or None if the layout is unknown.
+
+        Different SHAP versions return different layouts: a list with one [samples, words] array per job family (older),
+        a 3D array [samples, words, job families] (0.44+), a 3D array [job families, samples, words], or a 2D
+        [samples, words] array when there is a single output."""
+        n_classes = len(self.categories)
+        if isinstance(shap_output, (list, tuple)):
+            shap_values = np.stack([np.asarray(part) for part in shap_output], axis=-1)    # [samples, words, job families]
+        else:
+            shap_values = np.asarray(shap_output)
+        if shap_values.ndim == 2:                                                           # [samples, words] -> one output
+            shap_values = shap_values[:, :, None]
+        if shap_values.ndim != 3:
+            return None
+        if shap_values.shape[1] != n_words:                                                 # words are not on axis 1: find them
+            if shap_values.shape[2] == n_words and shap_values.shape[0] == n_classes:
+                shap_values = np.transpose(shap_values, (1, 2, 0))                          # [classes, samples, words] -> standard
+            elif shap_values.shape[2] == n_words:
+                shap_values = np.transpose(shap_values, (0, 2, 1))                          # [samples, classes, words] -> standard
+            else:
+                return None
+        return shap_values.astype(np.float64)
+
     def explain(self, model_text, job_family_weights, words_up=8, words_down=5):
         """SHAP: which words pushed the match towards (up) or away from (down) the most likely job family."""
         if self.explain_model is None:
@@ -466,13 +495,13 @@ class FairForge:
             if self._shap_explainer is None:
                 self._shap_explainer = shap.LinearExplainer(word_classifier, shap.maskers.Independent(self.explain_background, max_samples=len(self.explain_background)))
             word_features = word_vectorizer.transform([model_text]).toarray().astype(np.float32)
-            shap_output = self._shap_explainer.shap_values(word_features)
-            shap_values = np.stack(shap_output, axis=-1) if isinstance(shap_output, list) else np.asarray(shap_output)
-            if shap_values.ndim == 3 and shap_values.shape[0] == len(self.categories) and shap_values.shape[2] != len(self.categories):
-                shap_values = np.transpose(shap_values, (1, 2, 0))              # make the shape [samples, words, job families]
+            vocabulary_words = word_vectorizer.get_feature_names_out()
+            shap_values = self._standardize_shap(self._shap_explainer.shap_values(word_features), len(vocabulary_words))
             # Explain the job family the description matches best: which words pushed towards it and which pushed away.
             family_index = int(np.argmax(job_family_weights))
-            word_effects, vocabulary_words = shap_values[0, :, family_index], word_vectorizer.get_feature_names_out()
+            if shap_values is None or not 0 <= family_index < shap_values.shape[2]:
+                return None                                                     # unexpected layout: show no explanation instead of crashing
+            word_effects = shap_values[0, :, family_index]
             strongest_up, strongest_down = np.argsort(-word_effects)[:words_up], np.argsort(word_effects)[:words_down]
             return {"family": self.categories[family_index],
                     "up": [(vocabulary_words[i], float(word_effects[i])) for i in strongest_up if word_effects[i] > 0],
