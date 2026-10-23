@@ -1,0 +1,15 @@
+# FairForge dependencies (Python 3.10 to 3.13)
+--extra-index-url https://download.pytorch.org/whl/cpu
+streamlit>=1.36,<1.50
+pandas>=2.0
+numpy>=1.26
+scikit-learn==1.6.1
+joblib>=1.3
+torch>=2.2
+sentence-transformers>=3.0
+spacy>=3.8,<3.9
+shap>=0.45
+plotly>=5.20
+pdfplumber>=0.11
+# spaCy English model (the app also tells you how to install it if this line fails)
+en_core_web_sm @ https://github.com/explosion/spacy-models/releases/download/en_core_web_sm-3.8.0/en_core_web_sm-3.8.0-py3-none-any.whl
