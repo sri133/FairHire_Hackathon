@@ -1,0 +1,21 @@
+FairForge/
+├── main.py                  
+├── core.py                  
+├── requirements.txt
+├── README.md
+├── UserGuide.md
+├── ProjectLinks.md
+├── Github_Repository_Structure.txt
+├── train_fairforge.ipynb   
+└── models/
+    ├── section_cnn.pt
+    ├── career_bilstm.pt
+    ├── fit_dnn.pt
+    ├── fit_dnn_config.json
+    ├── baseline_anon.joblib
+    ├── explain_lr.joblib
+    ├── explain_bg.npy
+    ├── category_centroids.npy
+    ├── vocab.json
+    ├── meta.json
+    └── metrics.json
