@@ -1,1 +1,85 @@
 # Fair_Hire-Hackathon
+# FairForge: a blind, glass-box resume screener that tests its own fairness
+
+**Team CODE FORGERS** (A.Jeyaditya, Sri Prasath.P, Naman Jain) | OlympAI 3.0, problem 3 (FairHire)
+
+FairForge ranks resumes against a job description using skills only. It hides identity details first, explains every score,
+and tests every ranking with a Twin Test (the same resume with two made-up identities must get the same score).
+
+## 1. Setup and installation
+1. Install Python 3.10 to 3.13.
+2. Open a terminal in this folder and create a virtual environment (recommended):
+   ```
+   python -m venv .venv
+   .venv\Scripts\activate          # Windows      (Mac/Linux: source .venv/bin/activate)
+   ```
+3. Install the dependencies:
+   ```
+   pip install -r requirements.txt
+   ```
+   If the last line (spaCy model) fails, run `python -m spacy download en_core_web_sm` instead.
+4. The first run downloads the MiniLM language model (about 90 MB) from Hugging Face, so it needs internet once.
+   If it cannot download, the app still runs with a TF-IDF fallback and shows a status warning.
+5. The trained model files must be in the `models/` folder (they are included in this ZIP).
+
+## 2. How to run the main code
+```
+streamlit run main.py
+```
+Open the link shown in the terminal (usually http://localhost:8501). Paste a job description, upload PDF or TXT resumes
+(or tick "Use the 3 demo resumes"), then press **Rank candidates**.
+
+## 3. Files and their purpose
+| File | Purpose |
+|---|---|
+| `main.py` | Streamlit app: ranking table, explanations, hidden-identity view, fairness audit, resume tips |
+| `core.py` | All logic: identity hiding, CNN / BiLSTM / DNN models, scoring, SHAP, Twin Test, tips |
+| `requirements.txt` | Dependency list |
+| `models/` | Trained models and saved results (see below) |
+| `train_fairforge.ipynb` | Google Colab notebook that cleaned the data and trained everything (Steps 1 to 5) |
+
+Files inside `models/`: `section_cnn.pt` (CNN), `career_bilstm.pt` (BiLSTM), `fit_dnn.pt` and `fit_dnn_config.json` (DNN),
+`baseline_anon.joblib` (TF-IDF + Logistic Regression), `explain_lr.joblib` and `explain_bg.npy` (SHAP explanation model),
+`category_centroids.npy`, `vocab.json`, `meta.json`, `metrics.json` (all test results).
+
+## 4. How it works
+1. **Hide identity** (spaCy + rules): names, places, colleges, pronouns, emails, phones, graduation years. Years inside job dates are kept so experience can still be read.
+2. **CNN** sorts every resume line into Summary, Skills, Experience, Education or Other.
+3. **BiLSTM** (a recurrent network) reads the job-history lines in order and scores how well the career path fits the job family.
+4. **MiniLM + DNN**: MiniLM turns text into meaning vectors; a 3-hidden-layer DNN gives a job-fit probability.
+5. **Score** = a visible, adjustable mix of meaning match, job fit, career path and skill keywords (sliders in the app).
+6. **SHAP** shows which words raised or lowered the match. **Twin Test** checks the score does not move when only identity changes.
+
+## 5. Results (test set of 373 resumes unless stated; Kaggle Resume Dataset, 24 job categories, chance = 4%)
+| Model | Result |
+|---|---|
+| Section CNN (test lines) | accuracy 82.3%, macro F1 0.686 |
+| Career BiLSTM (job history only) | accuracy 47.7%, macro F1 0.419 |
+| TF-IDF + Logistic Regression (ML baseline) | accuracy 65.4%, same on raw and anonymized text (hiding identity cost no accuracy) |
+| MiniLM + Logistic Regression | accuracy 60.1% |
+| DNN (MiniLM / + CNN / + CNN + BiLSTM features) | 53.4% / 54.7% / 47.5% |
+
+**Fairness audit** (every identity and the biased hiring history are synthetic, made up for the test; top 30% selected):
+
+| Test | Identity visible | Identity hidden |
+|---|---|---|
+| Gender Disparate Impact (0.80 or more passes) | 0.70 (fail) | 1.00 (pass) |
+| Gender: twin decisions that flip | 10.7% | 0.0% |
+| Age Disparate Impact | 0.98 | 1.00 |
+| Adversary guessing gender | 64.3% | 50.4% (chance) |
+| Adversary guessing age | 54.2% | 50.0% (chance) |
+
+Anonymizer recall on injected identities: pronouns 100%, graduation years 100%, known first names 88.5%, unseen first names 84.5%.
+SHAP values add up exactly (additivity gap 0.0000).
+
+## 6. Honest limits
+- The DNN is trained on only 1,736 resumes and scores **below** the classic TF-IDF baseline. FairForge therefore uses it as one signal among four, not as the only judge.
+- The Kaggle data has no names, gender, age or hiring outcomes. Identities and the biased hiring history in the audit are synthetic, so the audit shows that the method works, not that real hiring data is biased.
+- Name hiding uses spaCy plus a list of common first names (and any person-like name in the first lines), so some names can be missed (recall above).
+- The CNN and BiLSTM use approximate labels taken from the resume's own section headings.
+- Scanned PDFs need OCR first. FairForge supports human recruiters; it must not make hiring decisions alone.
+
+## 7. Tools used to create models or components
+- Pretrained components: **all-MiniLM-L6-v2** (sentence-transformers, from Hugging Face) and **spaCy en_core_web_sm**.
+- Our own models (trained in Google Colab): the section CNN, the career BiLSTM, the fit DNN and the TF-IDF Logistic Regression baselines.
+- Data: Kaggle "Resume Dataset" by snehaanbhawal. Libraries: PyTorch, scikit-learn, SHAP, spaCy, Streamlit, Plotly, pdfplumber.
